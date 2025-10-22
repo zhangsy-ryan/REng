@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 from scipy.integrate import solve_ivp
-from scipy.optimize import differential_evolution, minimize
+from scipy.optimize import minimize
 from scipy.stats.qmc import LatinHypercube
 
 from .benchmark import Benchmark
@@ -29,13 +31,13 @@ class PyrrolidineSNAr(Benchmark):
     model is integrated using scipy to find outlet concentrations of all species.
 
     Parameter units :
-        - 'Radius'                  : m
-        - 'Length'                  : m
-        - 'Activation_Energy'       : kJ/mol
-        - 'Pre-exponential_Factor'  : 
-        - 'Concentration'           : mol/L
-        - 'Temperature'             : oC
-        - 'Residence Time'          : min
+        - 'Radius'                              : m
+        - 'Length'                              : m
+        - 'Activation_Energy'                   : kJ/mol
+        - 'Referenced_Reaction_Rate_Constant'   : 
+        - 'Concentration'                       : mol/L
+        - 'Temperature'                         : oC
+        - 'Residence Time'                      : min
 
     References
     ----------
@@ -102,10 +104,10 @@ class PyrrolidineSNAr(Benchmark):
             ("Activation_Energy", None, 0, 1, None): 35.3,  # kJ/mol
             ("Activation_Energy", None, 0, 2, None): 38.9,  # kJ/mol
             ("Activation_Energy", None, 0, 3, None): 44.8,  # kJ/mol
-            ("Pre-exponential_Factor", None, 0, 0, None): 0.57900,  # L/mol s
-            ("Pre-exponential_Factor", None, 0, 1, None): 0.02700,  # L/mol s
-            ("Pre-exponential_Factor", None, 0, 2, None): 0.00865,  # L/mol s
-            ("Pre-exponential_Factor", None, 0, 3, None): 0.01630,  # L/mol s
+            ("Referenced_Reaction_Rate_Constant", None, 0, 0, None): 0.57900,  # L/mol s
+            ("Referenced_Reaction_Rate_Constant", None, 0, 1, None): 0.02700,  # L/mol s
+            ("Referenced_Reaction_Rate_Constant", None, 0, 2, None): 0.00865,  # L/mol s
+            ("Referenced_Reaction_Rate_Constant", None, 0, 3, None): 0.01630,  # L/mol s
             ("Stoichiometric_Coefficient", None, None, 0, 0): -1,
             ("Stoichiometric_Coefficient", None, None, 0, 1): -1,
             ("Stoichiometric_Coefficient", None, None, 0, 2): 1,
@@ -159,7 +161,7 @@ class PyrrolidineSNAr(Benchmark):
     def _setup_var2unit(self):
         var2unit = {
             "Activation_Energy": "kJ/mol",
-            "Pre-exponential_Factor": None,
+            "Referenced_Reaction_Rate_Constant": None,
             "Temperature": "oC",
             "Concentration": "mol/L",
             "Residence_Time": "min",
@@ -198,10 +200,10 @@ class PyrrolidineSNAr(Benchmark):
         n[3, 1] = params[("Partial_Order", None, None, 3, 1)]
         n[3, 3] = params[("Partial_Order", None, None, 3, 3)]
         A = np.zeros((1, 4), dtype=np.float64)
-        A[0, 0] = params[("Pre-exponential_Factor", None, 0, 0, None)]
-        A[0, 1] = params[("Pre-exponential_Factor", None, 0, 1, None)]
-        A[0, 2] = params[("Pre-exponential_Factor", None, 0, 2, None)]
-        A[0, 3] = params[("Pre-exponential_Factor", None, 0, 3, None)]
+        A[0, 0] = params[("Referenced_Reaction_Rate_Constant", None, 0, 0, None)]
+        A[0, 1] = params[("Referenced_Reaction_Rate_Constant", None, 0, 1, None)]
+        A[0, 2] = params[("Referenced_Reaction_Rate_Constant", None, 0, 2, None)]
+        A[0, 3] = params[("Referenced_Reaction_Rate_Constant", None, 0, 3, None)]
         E_a = np.zeros((1, 4), dtype=np.float64)
         E_a[0, 0] = params[("Activation_Energy", None, 0, 0, None)]
         E_a[0, 1] = params[("Activation_Energy", None, 0, 1, None)]
@@ -291,6 +293,222 @@ class PyrrolidineSNAr(Benchmark):
         )
         cal_params = {ind: round(v.item(), 6) for ind, v in zip(cal_param_bounds.keys(), res.x)}
         return cal_params
+    
+    def plot_simulation_profiles(self, operation_params, kinetics_params=None, transport_params=None):
+        t, cs = self.run(operation_params, kinetics_params, transport_params)
+        data = {"Time (min)": [], "Concentration (mol/L)": [], "Species": []}
+        for i, s in enumerate(self.species):
+            for _t, _c in zip(t, cs[i]):
+                data["Time (min)"].append(_t)
+                data["Concentration (mol/L)"].append(_c)
+                data["Species"].append(f"{i+1} {s}")
+        df = pd.DataFrame(data)
+        fig = px.line(df, x="Time (min)", y="Concentration (mol/L)", color="Species")
+        fig.update_layout(width=800, height=500, title="Concentration Profiles")
+        fig.show()
+
+    def plot_product_profile_with_temperatures(self, operation_params, kinetics_params=None, transport_params=None):
+        temperatures = operation_params[("Temperature", None, None, None, None)]
+        residence_time = operation_params[("Residence_Time", None, None, None, None)]
+        prld_conc = operation_params[("Concentration", None, 0, None, 1)]
+        data = {"Time (min)": [], "3 Ortho concentration (mol/L)": [], "Temperature (oC)": []}
+        for temperature in temperatures:
+            _operation_params = {
+                ("Temperature", None, None, None, None): temperature,
+                ("Residence_Time", None, None, None, None): residence_time,
+                ("Concentration", None, 0, None, 1): prld_conc,
+            }
+            t, cs = self.run(_operation_params, kinetics_params, transport_params)
+            for _t, _c in zip(t, cs[self.species.index("ortho")]):
+                data["Time (min)"].append(_t)
+                data["3 Ortho concentration (mol/L)"].append(_c)
+                data["Temperature (oC)"].append(temperature)
+        df = pd.DataFrame(data)
+        fig = px.line(df, x="Time (min)", y="3 Ortho concentration (mol/L)", color="Temperature (oC)")
+        fig.update_layout(width=800, height=500, title="Product Concentration Profiles under Varied Temperatures")
+        fig.show()
+
+    def plot_product_profile_with_prld_concs(self, operation_params, kinetics_params=None, transport_params=None):
+        temperature = operation_params[("Temperature", None, None, None, None)]
+        residence_time = operation_params[("Residence_Time", None, None, None, None)]
+        prld_concs = operation_params[("Concentration", None, 0, None, 1)]
+        data = {"Time (min)": [], "3 Ortho concentration (mol/L)": [], "Pyrrolidine concentration (mol/L)": []}
+        for prld_conc in prld_concs:
+            _operation_params = {
+                ("Temperature", None, None, None, None): temperature,
+                ("Residence_Time", None, None, None, None): residence_time,
+                ("Concentration", None, 0, None, 1): prld_conc,
+            }
+            t, cs = self.run(_operation_params, kinetics_params, transport_params)
+            for _t, _c in zip(t, cs[self.species.index("ortho")]):
+                data["Time (min)"].append(_t)
+                data["3 Ortho concentration (mol/L)"].append(_c)
+                data["Pyrrolidine concentration (mol/L)"].append(round(prld_conc, 1))
+        df = pd.DataFrame(data)
+        fig = px.line(df, x="Time (min)", y="3 Ortho concentration (mol/L)", color="Pyrrolidine concentration (mol/L)")
+        fig.update_layout(width=900, height=500, title="Product Concentration Profiles under Varied Pyrrolidine Concentrations")
+        fig.show()
+    
+    def plot_product_conc_landscapes(self, operation_params, kinetics_params=None, transport_params=None):
+        temperatures = operation_params[("Temperature", None, None, None, None)]
+        residence_times = operation_params[("Residence_Time", None, None, None, None)]
+        prld_concs = operation_params[("Concentration", None, 0, None, 1)]
+        shape = (len(residence_times), len(prld_concs))
+        
+        data = []
+        for temperature in temperatures:
+            d = {
+                "Temperature (oC)": temperature,
+                "Residence time (min)": [], 
+                "2 Pyrrolidine concentration (mol/L)": [], 
+                "3 Ortho concentration (mol/L)": [], 
+            }
+            for residence_time in residence_times:
+                for prld_conc in prld_concs:
+                    _operation_params = {
+                        ("Temperature", None, None, None, None): temperature,
+                        ("Residence_Time", None, None, None, None): residence_time,
+                        ("Concentration", None, 0, None, 1): prld_conc,
+                    }
+                    t, cs = self.run(_operation_params, kinetics_params, transport_params)
+                    d["Residence time (min)"].append(residence_time)
+                    d["2 Pyrrolidine concentration (mol/L)"].append(prld_conc)
+                    d["3 Ortho concentration (mol/L)"].append(cs[2][-1])
+            d["Residence time (min)"] = np.array(d["Residence time (min)"]).reshape(shape)
+            d["2 Pyrrolidine concentration (mol/L)"] = np.array(d["2 Pyrrolidine concentration (mol/L)"]).reshape(shape)
+            d["3 Ortho concentration (mol/L)"] = np.array(d["3 Ortho concentration (mol/L)"]).reshape(shape)
+            data.append(d)
+
+        fig = go.Figure(
+            data=[
+                go.Surface(
+                    x=d["Residence time (min)"], 
+                    y=d["2 Pyrrolidine concentration (mol/L)"], 
+                    z=d["3 Ortho concentration (mol/L)"], 
+                    coloraxis="coloraxis",
+                ) for d in data
+            ] + [
+                go.Scatter3d(
+                    x=[d["Residence time (min)"][0, -1]], 
+                    y=[d["2 Pyrrolidine concentration (mol/L)"][0, -1]], 
+                    z=[d["3 Ortho concentration (mol/L)"][0, -1]], 
+                    mode="text",
+                    text=[f"T = {d['Temperature (oC)']} oC"],
+                    textposition="bottom right",
+                    textfont=dict(size=12, color="red"),
+                    showlegend=False,
+                ) for d in data
+            ]
+        )
+
+        fig.update_layout(
+            scene=dict(
+                xaxis=dict(tickmode="array", tickvals=[0.5, 1, 1.5, 2], title="Residence time (min)"),
+                yaxis=dict(tickmode="array", tickvals=[0.1, 0.2, 0.3, 0.4, 0.5], title="2 Pyrrolidine concentration (M)"),
+                zaxis=dict(tickmode="array",tickvals=[0.05, 0.1, 0.15, 0.2], title="3 Ortho concentration (M)"),
+            ),
+            coloraxis=dict(colorscale="Viridis", cmin=0.06, cmax=0.18),
+            width=900, height=700,
+            scene_camera = dict(eye=dict(x=1.5, y=1.5, z=1.5)),
+            title="Product Concentration Landscapes"
+        )
+        fig.show()
+    
+    def plot_product_conc_landscape_with_ground_truth(
+            self, 
+            operation_params, 
+            cal_kinetics_params=None, 
+            cal_transport_params=None,
+            kinetics_params=None, 
+            transport_params=None
+        ):
+        temperature = operation_params[("Temperature", None, None, None, None)]
+        residence_times = operation_params[("Residence_Time", None, None, None, None)]
+        prld_concs = operation_params[("Concentration", None, 0, None, 1)]
+        shape = (len(residence_times), len(prld_concs))
+
+        gt_data = {
+            "Temperature (oC)": temperature,
+            "Residence time (min)": [], 
+            "2 Pyrrolidine concentration (mol/L)": [], 
+            "3 Ortho concentration (mol/L)": [], 
+        }
+        for residence_time in residence_times:
+            for prld_conc in prld_concs:
+                _operation_params = {
+                    ("Temperature", None, None, None, None): temperature,
+                    ("Residence_Time", None, None, None, None): residence_time,
+                    ("Concentration", None, 0, None, 1): prld_conc,
+                }
+                t, cs = self.run(_operation_params, kinetics_params, transport_params)
+                gt_data["Residence time (min)"].append(residence_time)
+                gt_data["2 Pyrrolidine concentration (mol/L)"].append(prld_conc)
+                gt_data["3 Ortho concentration (mol/L)"].append(cs[2][-1])
+        gt_data["Residence time (min)"] = np.array(gt_data["Residence time (min)"]).reshape(shape)
+        gt_data["2 Pyrrolidine concentration (mol/L)"] = np.array(gt_data["2 Pyrrolidine concentration (mol/L)"]).reshape(shape)
+        gt_data["3 Ortho concentration (mol/L)"] = np.array(gt_data["3 Ortho concentration (mol/L)"]).reshape(shape)
+
+        cal_data = {
+            "Temperature (oC)": temperature,
+            "Residence time (min)": [], 
+            "2 Pyrrolidine concentration (mol/L)": [], 
+            "3 Ortho concentration (mol/L)": [], 
+        }
+        for residence_time in residence_times:
+            for prld_conc in prld_concs:
+                _operation_params = {
+                    ("Temperature", None, None, None, None): temperature,
+                    ("Residence_Time", None, None, None, None): residence_time,
+                    ("Concentration", None, 0, None, 1): prld_conc,
+                }
+                t, cs = self.run(_operation_params, cal_kinetics_params, cal_transport_params)
+                cal_data["Residence time (min)"].append(residence_time)
+                cal_data["2 Pyrrolidine concentration (mol/L)"].append(prld_conc)
+                cal_data["3 Ortho concentration (mol/L)"].append(cs[2][-1])
+        cal_data["Residence time (min)"] = np.array(cal_data["Residence time (min)"]).reshape(shape)
+        cal_data["2 Pyrrolidine concentration (mol/L)"] = np.array(cal_data["2 Pyrrolidine concentration (mol/L)"]).reshape(shape)
+        cal_data["3 Ortho concentration (mol/L)"] = np.array(cal_data["3 Ortho concentration (mol/L)"]).reshape(shape)
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Surface(
+                x=gt_data["Residence time (min)"], 
+                y=gt_data["2 Pyrrolidine concentration (mol/L)"], 
+                z=gt_data["3 Ortho concentration (mol/L)"], 
+                colorscale='Viridis',
+                colorbar=dict(title='Ground-truth', len=0.8, x=1.05),
+                cmin=0.1,
+                cmax=0.185,
+                name='Ground-truth',
+                showscale=True,
+            )
+        )
+        fig.add_trace(
+            go.Surface(
+                x=cal_data["Residence time (min)"], 
+                y=cal_data["2 Pyrrolidine concentration (mol/L)"], 
+                z=cal_data["3 Ortho concentration (mol/L)"], 
+                colorscale='Thermal',
+                colorbar=dict(title='Calibrated model', len=0.8, x=1.25),
+                cmin=0.1,
+                cmax=0.185,
+                name='Calibrated model',
+                showscale=True
+            )
+        )
+
+        fig.update_layout(
+            scene=dict(
+                xaxis=dict(tickmode="array", tickvals=[0.5, 1, 1.5, 2], title="Residence time (min)"),
+                yaxis=dict(tickmode="array", tickvals=[0.1, 0.2, 0.3, 0.4, 0.5], title="2 Pyrrolidine concentration (M)"),
+                zaxis=dict(tickmode="array",tickvals=[0.05, 0.1, 0.15, 0.2], title="3 Ortho concentration (M)"),
+            ),
+            # coloraxis=dict(colorscale="Viridis", cmin=0.06, cmax=0.18),
+            width=900, height=700,
+            scene_camera = dict(eye=dict(x=1.5, y=1.5, z=1.5)),
+            title="Modelled vs Ground-truth Product Concentration Landscapes"
+        )
+        fig.show()
 
 
 if __name__ == "__main__":
